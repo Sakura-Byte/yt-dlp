@@ -1007,6 +1007,11 @@ def create_parser():
         dest='concurrent_fragment_downloads', metavar='N', default=1, type=int,
         help='Number of fragments of a dash/hlsnative video that should be downloaded concurrently (default is %default)')
     downloader.add_option(
+        '--jobs', '--playlist-concurrency',
+        dest='playlist_concurrency', metavar='N', default=4, type=int,
+        help='Number of playlist or channel items to download concurrently (default is %default). '
+             'Does not apply to fragment downloads')
+    downloader.add_option(
         '-r', '--limit-rate', '--rate-limit',
         dest='ratelimit', metavar='RATE',
         help='Maximum download rate in bytes per second, e.g. 50K or 4.2M')

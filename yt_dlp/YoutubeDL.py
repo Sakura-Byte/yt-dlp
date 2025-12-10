@@ -1,4 +1,5 @@
 import collections
+import concurrent.futures
 import contextlib
 import copy
 import datetime as dt
@@ -286,6 +287,7 @@ class YoutubeDL:
                        Default is 'only_download' for CLI, but False for API
     skip_playlist_after_errors: Number of allowed failures until the rest of
                        the playlist is skipped
+    playlist_concurrency: Number of playlist or channel entries to process in parallel
     allowed_extractors:  List of regexes to match against extractor names that are allowed
     overwrites:        Overwrite all video and metadata files if True,
                        overwrite only non-video files if None
@@ -2098,13 +2100,11 @@ class YoutubeDL:
         if keep_resolved_entries:
             self.write_debug('The information of all playlist entries will be held in memory')
 
-        failures = 0
-        max_failures = self.params.get('skip_playlist_after_errors') or float('inf')
-        for i, (playlist_index, entry) in enumerate(entries):
-            if lazy:
-                resolved_entries.append((playlist_index, entry))
+        playlist_concurrency = self.params.get('playlist_concurrency') or 1
+
+        def process_playlist_entry(i, playlist_index, entry):
             if not entry:
-                continue
+                return i, playlist_index, entry, True
 
             entry['__x_forwarded_for_ip'] = ie_result.get('__x_forwarded_for_ip')
             if not lazy and 'playlist-index' in self.params['compat_opts']:
@@ -2119,8 +2119,7 @@ class YoutubeDL:
 
             if self._match_entry(entry_copy, incomplete=True) is not None:
                 # For compatabilty with youtube-dl. See https://github.com/yt-dlp/yt-dlp/issues/4369
-                resolved_entries[i] = (playlist_index, NO_DEFAULT)
-                continue
+                return i, playlist_index, NO_DEFAULT, True
 
             self.to_screen(
                 f'[download] Downloading item {self._format_screen(i + 1, self.Styles.ID)} '
@@ -2130,14 +2129,51 @@ class YoutubeDL:
                 'playlist_index': playlist_index,
                 'playlist_autonumber': i + 1,
             }, extra))
-            if not entry_result:
-                failures += 1
-            if failures >= max_failures:
-                self.report_error(
-                    f'Skipping the remaining entries in playlist "{title}" since {failures} items failed extraction')
-                break
-            if keep_resolved_entries:
+            return i, playlist_index, entry_result, bool(entry_result)
+
+        failures = 0
+        max_failures = self.params.get('skip_playlist_after_errors') or float('inf')
+        max_failures_reached = False
+
+        def handle_result(i, playlist_index, entry_result, success):
+            nonlocal failures, max_failures_reached
+            if entry_result is NO_DEFAULT:
+                resolved_entries[i] = (playlist_index, NO_DEFAULT)
+            elif keep_resolved_entries:
                 resolved_entries[i] = (playlist_index, entry_result)
+
+            if not success:
+                failures += 1
+                if failures >= max_failures and not max_failures_reached:
+                    self.report_error(
+                        f'Skipping the remaining entries in playlist "{title}" since {failures} items failed extraction')
+                    max_failures_reached = True
+
+        if playlist_concurrency <= 1:
+            for i, (playlist_index, entry) in enumerate(entries):
+                if lazy:
+                    resolved_entries.append((playlist_index, entry))
+                handle_result(*process_playlist_entry(i, playlist_index, entry))
+                if max_failures_reached:
+                    break
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=playlist_concurrency) as executor:
+                pending = collections.deque()
+                for i, (playlist_index, entry) in enumerate(entries):
+                    if max_failures_reached:
+                        break
+                    if lazy:
+                        resolved_entries.append((playlist_index, entry))
+                    pending.append(executor.submit(process_playlist_entry, i, playlist_index, entry))
+                    if len(pending) >= playlist_concurrency:
+                        handle_result(*pending.popleft().result())
+
+                while pending:
+                    handle_result(*pending.popleft().result())
+                    if max_failures_reached:
+                        for future in pending:
+                            future.cancel()
+                        break
 
         # Update with processed data
         ie_result['entries'] = [e for _, e in resolved_entries if e is not NO_DEFAULT]
