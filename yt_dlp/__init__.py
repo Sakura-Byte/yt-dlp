@@ -217,6 +217,7 @@ def validate_options(opts):
     validate_positive('autonumber start', opts.autonumber_start)
     validate_positive('autonumber size', opts.autonumber_size, True)
     validate_positive('concurrent fragments', opts.concurrent_fragment_downloads, True)
+    validate_positive('playlist concurrency', opts.playlist_concurrency, True)
     validate_positive('playlist start', opts.playliststart, True)
     if opts.playlistend != -1:
         validate_minmax(opts.playliststart, opts.playlistend, 'playlist start', 'playlist end')
@@ -854,6 +855,7 @@ def parse_options(argv=None):
         'progress_with_newline': opts.progress_with_newline,
         'progress_template': opts.progress_template,
         'progress_delta': opts.progress_delta,
+        'playlist_concurrency': opts.playlist_concurrency,
         'playliststart': opts.playliststart,
         'playlistend': opts.playlistend,
         'playlistreverse': opts.playlist_reverse,

@@ -560,6 +560,10 @@ Tip: Use `CTRL`+`F` (or `Command`+`F`)  to search by keywords
     -N, --concurrent-fragments N    Number of fragments of a dash/hlsnative
                                     video that should be downloaded concurrently
                                     (default is 1)
+    --jobs, --playlist-concurrency N
+                                   Number of playlist or channel items to
+                                   download concurrently (default is 4). Does
+                                   not apply to fragment downloads
     -r, --limit-rate RATE           Maximum download rate in bytes per second,
                                     e.g. 50K or 4.2M
     --throttled-rate RATE           Minimum download rate in bytes per second
@@ -2264,6 +2268,8 @@ with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 * **Split video by chapters**: Videos can be split into multiple files based on chapters using `--split-chapters`
 
 * **Multi-threaded fragment downloads**: Download multiple fragments of m3u8/mpd videos in parallel. Use `--concurrent-fragments` (`-N`) option to set the number of threads used
+
+* **Parallel playlist downloads**: Download multiple playlist or channel entries concurrently with `--jobs`/`--playlist-concurrency` (default 4)
 
 * **Aria2c with HLS/DASH**: You can use `aria2c` as the external downloader for DASH(mpd) and HLS(m3u8) formats
 
