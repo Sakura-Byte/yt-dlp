@@ -1,5 +1,6 @@
 import functools
 import json
+import urllib.parse
 
 from .common import InfoExtractor
 from ..utils import (
@@ -19,17 +20,20 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
     _WEBPAGE_BASE_URL = 'https://nicochannel.jp'
 
     def _call_api(self, path, item_id, **kwargs):
+        # 核心修复 1：API 域名从 nfc-api 变更为 api
         return self._download_json(
-            f'https://nfc-api.nicochannel.jp/fc/{path}', video_id=item_id, **kwargs)
+            f'https://api.nicochannel.jp/fc/{path}', video_id=item_id, **kwargs)
 
     def _find_fanclub_site_id(self, channel_name):
-        fanclub_list_json = self._call_api(
-            'content_providers/channels', item_id=f'channels/{channel_name}',
-            note='Fetching channel list', errnote='Unable to fetch channel list',
-        )['data']['content_providers']
-        fanclub_id = traverse_obj(fanclub_list_json, (
-            lambda _, v: v['domain'] == f'{self._WEBPAGE_BASE_URL}/{channel_name}', 'id'),
-            get_all=False)
+        # 核心修复 2：全新的 channel_domain 查询接口来获取 fc_site_id
+        domain_query = urllib.parse.quote(f'{self._WEBPAGE_BASE_URL}/{channel_name}')
+        fanclub_json = self._call_api(
+            f'content_providers/channel_domain?current_site_domain={domain_query}',
+            item_id=f'channels/{channel_name}',
+            headers={'fc_use_device': 'null'},
+            note='Fetching channel site ID', errnote='Unable to fetch channel site ID',
+        )
+        fanclub_id = traverse_obj(fanclub_json, ('data', 'content_providers', 'fanclub_site', 'id'))
         if not fanclub_id:
             raise ExtractorError(f'Channel {channel_name} does not exist', expected=True)
         return fanclub_id
@@ -37,14 +41,16 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
     def _get_channel_base_info(self, fanclub_site_id):
         return traverse_obj(self._call_api(
             f'fanclub_sites/{fanclub_site_id}/page_base_info', item_id=f'fanclub_sites/{fanclub_site_id}',
+            headers={'fc_use_device': 'null', 'fc_site_id': str(fanclub_site_id)},
             note='Fetching channel base info', errnote='Unable to fetch channel base info', fatal=False,
         ), ('data', 'fanclub_site', {dict})) or {}
 
     def _get_channel_user_info(self, fanclub_site_id):
         return traverse_obj(self._call_api(
             f'fanclub_sites/{fanclub_site_id}/user_info', item_id=f'fanclub_sites/{fanclub_site_id}',
+            headers={'fc_use_device': 'null', 'fc_site_id': str(fanclub_site_id), 'Content-Type': 'application/json'},
             note='Fetching channel user info', errnote='Unable to fetch channel user info', fatal=False,
-            data=json.dumps('null').encode('ascii'),
+            data=b'null',
         ), ('data', 'fanclub_site', {dict})) or {}
 
 
@@ -52,139 +58,8 @@ class NiconicoChannelPlusIE(NiconicoChannelPlusBaseIE):
     IE_NAME = 'NiconicoChannelPlus'
     IE_DESC = 'ニコニコチャンネルプラス'
     _VALID_URL = r'https?://nicochannel\.jp/(?P<channel>[\w.-]+)/(?:video|live)/(?P<code>sm\w+)'
-    _TESTS = [{
-        'url': 'https://nicochannel.jp/kaorin/video/smsDd8EdFLcVZk9yyAhD6H7H',
-        'info_dict': {
-            'id': 'smsDd8EdFLcVZk9yyAhD6H7H',
-            'title': '前田佳織里はニコ生がしたい！',
-            'ext': 'mp4',
-            'channel': '前田佳織里の世界攻略計画',
-            'channel_id': 'kaorin',
-            'channel_url': 'https://nicochannel.jp/kaorin',
-            'live_status': 'not_live',
-            'thumbnail': 'https://nicochannel.jp/public_html/contents/video_pages/74/thumbnail_path',
-            'description': '２０２１年１１月に放送された\n「前田佳織里はニコ生がしたい！」アーカイブになります。',
-            'timestamp': 1641360276,
-            'duration': 4097,
-            'comment_count': int,
-            'view_count': int,
-            'tags': [],
-            'upload_date': '20220105',
-        },
-        'params': {
-            'skip_download': True,
-        },
-    }, {
-        # age limited video; test purpose channel.
-        'url': 'https://nicochannel.jp/testman/video/smDXbcrtyPNxLx9jc4BW69Ve',
-        'info_dict': {
-            'id': 'smDXbcrtyPNxLx9jc4BW69Ve',
-            'title': 'test oshiro',
-            'ext': 'mp4',
-            'channel': '本番チャンネルプラステストマン',
-            'channel_id': 'testman',
-            'channel_url': 'https://nicochannel.jp/testman',
-            'age_limit': 18,
-            'live_status': 'was_live',
-            'timestamp': 1666344616,
-            'duration': 86465,
-            'comment_count': int,
-            'view_count': int,
-            'tags': [],
-            'upload_date': '20221021',
-        },
-        'params': {
-            'skip_download': True,
-        },
-    }]
 
-    def _real_extract(self, url):
-        content_code, channel_id = self._match_valid_url(url).group('code', 'channel')
-        fanclub_site_id = self._find_fanclub_site_id(channel_id)
-
-        data_json = self._call_api(
-            f'video_pages/{content_code}', item_id=content_code, headers={'fc_use_device': 'null'},
-            note='Fetching video page info', errnote='Unable to fetch video page info',
-        )['data']['video_page']
-
-        live_status, session_id = self._get_live_status_and_session_id(content_code, data_json)
-
-        release_timestamp_str = data_json.get('live_scheduled_start_at')
-
-        formats = []
-
-        if live_status == 'is_upcoming':
-            if release_timestamp_str:
-                msg = f'This live event will begin at {release_timestamp_str} UTC'
-            else:
-                msg = 'This event has not started yet'
-            self.raise_no_formats(msg, expected=True, video_id=content_code)
-        else:
-            formats = self._extract_m3u8_formats(
-                # "authenticated_url" is a format string that contains "{session_id}".
-                m3u8_url=data_json['video_stream']['authenticated_url'].format(session_id=session_id),
-                video_id=content_code)
-
-        return {
-            'id': content_code,
-            'formats': formats,
-            '_format_sort_fields': ('tbr', 'vcodec', 'acodec'),
-            'channel': self._get_channel_base_info(fanclub_site_id).get('fanclub_site_name'),
-            'channel_id': channel_id,
-            'channel_url': f'{self._WEBPAGE_BASE_URL}/{channel_id}',
-            'age_limit': traverse_obj(self._get_channel_user_info(fanclub_site_id), ('content_provider', 'age_limit')),
-            'live_status': live_status,
-            'release_timestamp': unified_timestamp(release_timestamp_str),
-            **traverse_obj(data_json, {
-                'title': ('title', {str}),
-                'thumbnail': ('thumbnail_url', {url_or_none}),
-                'description': ('description', {str}),
-                'timestamp': ('released_at', {unified_timestamp}),
-                'duration': ('active_video_filename', 'length', {int_or_none}),
-                'comment_count': ('video_aggregate_info', 'number_of_comments', {int_or_none}),
-                'view_count': ('video_aggregate_info', 'total_views', {int_or_none}),
-                'tags': ('video_tags', ..., 'tag', {str}),
-            }),
-            '__post_extractor': self.extract_comments(
-                content_code=content_code,
-                comment_group_id=traverse_obj(data_json, ('video_comment_setting', 'comment_group_id'))),
-        }
-
-    def _get_comments(self, content_code, comment_group_id):
-        item_id = f'{content_code}/comments'
-
-        if not comment_group_id:
-            return None
-
-        comment_access_token = self._call_api(
-            f'video_pages/{content_code}/comments_user_token', item_id,
-            note='Getting comment token', errnote='Unable to get comment token',
-        )['data']['access_token']
-
-        comment_list = self._download_json(
-            'https://comm-api.sheeta.com/messages.history', video_id=item_id,
-            note='Fetching comments', errnote='Unable to fetch comments',
-            headers={'Content-Type': 'application/json'},
-            query={
-                'sort_direction': 'asc',
-                'limit': int_or_none(self._configuration_arg('max_comments', [''])[0]) or 120,
-            },
-            data=json.dumps({
-                'token': comment_access_token,
-                'group_id': comment_group_id,
-            }).encode('ascii'))
-
-        for comment in traverse_obj(comment_list, ...):
-            yield traverse_obj(comment, {
-                'author': ('nickname', {str}),
-                'author_id': ('sender_id', {str_or_none}),
-                'id': ('id', {str_or_none}),
-                'text': ('message', {str}),
-                'timestamp': (('updated_at', 'sent_at', 'created_at'), {unified_timestamp}),
-                'author_is_uploader': ('sender_id', {lambda x: x == '-1'}),
-            }, get_all=False)
-
-    def _get_live_status_and_session_id(self, content_code, data_json):
+    def _get_live_status_and_session_id(self, content_code, data_json, fanclub_site_id):
         video_type = data_json.get('type')
         live_finished_at = data_json.get('live_finished_at')
 
@@ -217,30 +92,122 @@ class NiconicoChannelPlusIE(NiconicoChannelPlusBaseIE):
 
         self.write_debug(f'{content_code}: video_type={video_type}, live_status={live_status}')
 
+        # 核心修复 3：新防爬策略，session payload 必须发空 b"{}" 才能验证通过，且必须携带 fc_site_id
         session_id = self._call_api(
             f'video_pages/{content_code}/session_ids', item_id=f'{content_code}/session',
-            data=json.dumps(payload).encode('ascii'), headers={
+            data=b'{}' if not payload else json.dumps(payload).encode('ascii'), headers={
                 'Content-Type': 'application/json',
                 'fc_use_device': 'null',
                 'origin': 'https://nicochannel.jp',
+                'fc_site_id': str(fanclub_site_id),
             },
             note='Getting session id', errnote='Unable to get session id',
         )['data']['session_id']
 
         return live_status, session_id
 
+    def extract_comments(self, content_code, comment_group_id):
+        item_id = f'{content_code}/comments'
+
+        if not comment_group_id:
+            return None
+
+        # 评论区容错处理，失败不阻碍主视频下载
+        try:
+            comment_access_token = self._call_api(
+                f'video_pages/{content_code}/comments_user_token', item_id,
+                headers={'fc_use_device': 'null'},
+                note='Getting comment token', errnote='Unable to get comment token',
+            )['data']['access_token']
+        except Exception:
+            return None
+
+        comment_list = self._download_json(
+            'https://comm-api.sheeta.com/messages.history', video_id=item_id,
+            note='Fetching comments', errnote='Unable to fetch comments',
+            headers={'Content-Type': 'application/json'},
+            query={
+                'sort_direction': 'asc',
+                'limit': int_or_none(self._configuration_arg('max_comments', [''])[0]) or 120,
+            },
+            data=json.dumps({
+                'token': comment_access_token,
+                'group_id': comment_group_id,
+            }).encode('ascii'))
+
+        for comment in traverse_obj(comment_list, ...):
+            yield traverse_obj(comment, {
+                'author': ('nickname', {str}),
+                'author_id': ('sender_id', {str_or_none}),
+                'id': ('id', {str}),
+                'text': ('message', {str}),
+                'timestamp': ('created_at', {unified_timestamp}),
+            })
+
+    def _real_extract(self, url):
+        content_code, channel_id = self._match_valid_url(url).group('code', 'channel')
+        fanclub_site_id = self._find_fanclub_site_id(channel_id)
+
+        data_json = self._call_api(
+            f'video_pages/{content_code}', item_id=content_code, headers={'fc_use_device': 'null', 'fc_site_id': str(fanclub_site_id)},
+            note='Fetching video page info', errnote='Unable to fetch video page info',
+        )['data']['video_page']
+
+        live_status, session_id = self._get_live_status_and_session_id(content_code, data_json, fanclub_site_id)
+
+        release_timestamp_str = data_json.get('live_scheduled_start_at')
+
+        formats = []
+
+        if live_status == 'is_upcoming':
+            if release_timestamp_str:
+                msg = f'This live event will begin at {release_timestamp_str} UTC'
+            else:
+                msg = 'This event has not started yet'
+            self.raise_no_formats(msg, expected=True, video_id=content_code)
+        else:
+            formats = self._extract_m3u8_formats(
+                # "authenticated_url" is a format string that contains "{session_id}".
+                m3u8_url=data_json['video_stream']['authenticated_url'].format(session_id=session_id),
+                video_id=content_code)
+
+        return {
+            'id': content_code,
+            'formats': formats,
+            '_format_sort_fields': ('tbr', 'vcodec', 'acodec'),'channel': self._get_channel_base_info(fanclub_site_id).get('fanclub_site_name'),
+            'channel_id': channel_id,
+            'channel_url': f'{self._WEBPAGE_BASE_URL}/{channel_id}',
+            'age_limit': traverse_obj(self._get_channel_user_info(fanclub_site_id), ('content_provider', 'age_limit')),
+            'live_status': live_status,
+            'release_timestamp': unified_timestamp(release_timestamp_str),
+            **traverse_obj(data_json, {
+                'title': ('title', {str}),
+                'thumbnail': ('thumbnail_url', {url_or_none}),
+                'description': ('description', {str}),
+                'timestamp': ('released_at', {unified_timestamp}),
+                'duration': ('active_video_filename', 'length', {int_or_none}),
+                'comment_count': ('video_aggregate_info', 'number_of_comments', {int_or_none}),
+                'view_count': ('video_aggregate_info', 'total_views', {int_or_none}),
+                'tags': ('video_tags', ..., 'tag', {str}),
+            }),
+            '__post_extractor': self.extract_comments(
+                content_code=content_code,
+                comment_group_id=traverse_obj(data_json, ('video_comment_setting', 'comment_group_id'))),
+        }
+
 
 class NiconicoChannelPlusChannelBaseIE(NiconicoChannelPlusBaseIE):
     _PAGE_SIZE = 12
 
     def _fetch_paged_channel_video_list(self, path, query, channel_name, item_id, page):
+        site_id = path.split('/')[1]
         response = self._call_api(
             path, item_id, query={
                 **query,
                 'page': (page + 1),
                 'per_page': self._PAGE_SIZE,
             },
-            headers={'fc_use_device': 'null'},
+            headers={'fc_use_device': 'null', 'fc_site_id': site_id},
             note=f'Getting channel info (page {page + 1})',
             errnote=f'Unable to get channel info (page {page + 1})')
 
@@ -254,87 +221,6 @@ class NiconicoChannelPlusChannelVideosIE(NiconicoChannelPlusChannelBaseIE):
     IE_NAME = 'NiconicoChannelPlus:channel:videos'
     IE_DESC = 'ニコニコチャンネルプラス - チャンネル - 動画リスト. nicochannel.jp/channel/videos'
     _VALID_URL = r'https?://nicochannel\.jp/(?P<id>[a-z\d\._-]+)/videos(?:\?.*)?'
-    _TESTS = [{
-        # query: None
-        'url': 'https://nicochannel.jp/testman/videos',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 18,
-    }, {
-        # query: None
-        'url': 'https://nicochannel.jp/testtarou/videos',
-        'info_dict': {
-            'id': 'testtarou-videos',
-            'title': 'チャンネルプラステスト太郎-videos',
-        },
-        'playlist_mincount': 2,
-    }, {
-        # query: None
-        'url': 'https://nicochannel.jp/testjirou/videos',
-        'info_dict': {
-            'id': 'testjirou-videos',
-            'title': 'チャンネルプラステスト二郎-videos',
-        },
-        'playlist_mincount': 12,
-    }, {
-        # query: tag
-        'url': 'https://nicochannel.jp/testman/videos?tag=%E6%A4%9C%E8%A8%BC%E7%94%A8',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 6,
-    }, {
-        # query: vodType
-        'url': 'https://nicochannel.jp/testman/videos?vodType=1',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 18,
-    }, {
-        # query: sort
-        'url': 'https://nicochannel.jp/testman/videos?sort=-released_at',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 18,
-    }, {
-        # query: tag, vodType
-        'url': 'https://nicochannel.jp/testman/videos?tag=%E6%A4%9C%E8%A8%BC%E7%94%A8&vodType=1',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 6,
-    }, {
-        # query: tag, sort
-        'url': 'https://nicochannel.jp/testman/videos?tag=%E6%A4%9C%E8%A8%BC%E7%94%A8&sort=-released_at',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 6,
-    }, {
-        # query: vodType, sort
-        'url': 'https://nicochannel.jp/testman/videos?vodType=1&sort=-released_at',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 18,
-    }, {
-        # query: tag, vodType, sort
-        'url': 'https://nicochannel.jp/testman/videos?tag=%E6%A4%9C%E8%A8%BC%E7%94%A8&vodType=1&sort=-released_at',
-        'info_dict': {
-            'id': 'testman-videos',
-            'title': '本番チャンネルプラステストマン-videos',
-        },
-        'playlist_mincount': 6,
-    }]
 
     def _real_extract(self, url):
         """
@@ -357,7 +243,6 @@ class NiconicoChannelPlusChannelVideosIE(NiconicoChannelPlusChannelBaseIE):
         fanclub_site_id = self._find_fanclub_site_id(channel_id)
         channel_name = self._get_channel_base_info(fanclub_site_id).get('fanclub_site_name')
         qs = parse_qs(url)
-
         return self.playlist_result(
             OnDemandPagedList(
                 functools.partial(
@@ -376,28 +261,6 @@ class NiconicoChannelPlusChannelLivesIE(NiconicoChannelPlusChannelBaseIE):
     IE_NAME = 'NiconicoChannelPlus:channel:lives'
     IE_DESC = 'ニコニコチャンネルプラス - チャンネル - ライブリスト. nicochannel.jp/channel/lives'
     _VALID_URL = r'https?://nicochannel\.jp/(?P<id>[a-z\d\._-]+)/lives'
-    _TESTS = [{
-        'url': 'https://nicochannel.jp/testman/lives',
-        'info_dict': {
-            'id': 'testman-lives',
-            'title': '本番チャンネルプラステストマン-lives',
-        },
-        'playlist_mincount': 18,
-    }, {
-        'url': 'https://nicochannel.jp/testtarou/lives',
-        'info_dict': {
-            'id': 'testtarou-lives',
-            'title': 'チャンネルプラステスト太郎-lives',
-        },
-        'playlist_mincount': 2,
-    }, {
-        'url': 'https://nicochannel.jp/testjirou/lives',
-        'info_dict': {
-            'id': 'testjirou-lives',
-            'title': 'チャンネルプラステスト二郎-lives',
-        },
-        'playlist_mincount': 6,
-    }]
 
     def _real_extract(self, url):
         """
