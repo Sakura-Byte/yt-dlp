@@ -20,12 +20,10 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
     _WEBPAGE_BASE_URL = 'https://nicochannel.jp'
 
     def _call_api(self, path, item_id, **kwargs):
-        # 核心修复 1：API 域名从 nfc-api 变更为 api
         return self._download_json(
             f'https://api.nicochannel.jp/fc/{path}', video_id=item_id, **kwargs)
 
     def _find_fanclub_site_id(self, channel_name):
-        # 核心修复 2：全新的 channel_domain 查询接口来获取 fc_site_id
         domain_query = urllib.parse.quote(f'{self._WEBPAGE_BASE_URL}/{channel_name}')
         fanclub_json = self._call_api(
             f'content_providers/channel_domain?current_site_domain={domain_query}',
@@ -92,7 +90,6 @@ class NiconicoChannelPlusIE(NiconicoChannelPlusBaseIE):
 
         self.write_debug(f'{content_code}: video_type={video_type}, live_status={live_status}')
 
-        # 核心修复 3：新防爬策略，session payload 必须发空 b"{}" 才能验证通过，且必须携带 fc_site_id
         session_id = self._call_api(
             f'video_pages/{content_code}/session_ids', item_id=f'{content_code}/session',
             data=b'{}' if not payload else json.dumps(payload).encode('ascii'), headers={
@@ -112,7 +109,6 @@ class NiconicoChannelPlusIE(NiconicoChannelPlusBaseIE):
         if not comment_group_id:
             return None
 
-        # 评论区容错处理，失败不阻碍主视频下载
         try:
             comment_access_token = self._call_api(
                 f'video_pages/{content_code}/comments_user_token', item_id,
