@@ -4,6 +4,13 @@
 # To create a release, dispatch the https://github.com/yt-dlp/yt-dlp/actions/workflows/release.yml workflow on master
 -->
 
+### 2026.03.08.134136
+
+#### Core changes
+- [Update niconicochannelplus.py](https://github.com/yt-dlp/yt-dlp/commit/1cb3644834b4f0bd2d57ded60e226aa13c38e591) by [pukkandan](https://github.com/pukkandan)
+- [Update niconicochannelplus.py](https://github.com/yt-dlp/yt-dlp/commit/3c6ff45396785738244b03eb8740aa751f619aab) by [pukkandan](https://github.com/pukkandan)
+- [Update niconicochannelplus.py](https://github.com/yt-dlp/yt-dlp/commit/0039a08cce6a1bdda12587767a7f4c009ee17bd7) by [pukkandan](https://github.com/pukkandan)
+
 ### 2026.03.03
 
 #### Extractor changes
