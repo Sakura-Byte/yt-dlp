@@ -103,7 +103,7 @@ class NiconicoChannelPlusIE(NiconicoChannelPlusBaseIE):
 
         return live_status, session_id
 
-    def extract_comments(self, content_code, comment_group_id):
+    def _get_comments(self, content_code, comment_group_id):
         item_id = f'{content_code}/comments'
 
         if not comment_group_id:
