@@ -949,9 +949,9 @@ The only reliable way to check if a site is supported is to try it.
  - **niconico:playlist**
  - **niconico:series**
  - **niconico:tag**: NicoNico video tag URLs
- - **NiconicoChannelPlus**: ニコニコチャンネルプラス
- - **NiconicoChannelPlus:​channel:lives**: ニコニコチャンネルプラス - チャンネル - ライブリスト. nicochannel.jp/channel/lives
- - **NiconicoChannelPlus:​channel:videos**: ニコニコチャンネルプラス - チャンネル - 動画リスト. nicochannel.jp/channel/videos
+ - **NiconicoChannelPlus**: [*niconicochannelplus*](## "netrc machine") ニコニコチャンネルプラス
+ - **NiconicoChannelPlus:​channel:lives**: [*niconicochannelplus*](## "netrc machine") ニコニコチャンネルプラス - チャンネル - ライブリスト. nicochannel.jp/channel/lives
+ - **NiconicoChannelPlus:​channel:videos**: [*niconicochannelplus*](## "netrc machine") ニコニコチャンネルプラス - チャンネル - 動画リスト. nicochannel.jp/channel/videos
  - **NiconicoUser**
  - **nicovideo:search**: Nico video search; "nicosearch:" prefix
  - **nicovideo:​search:date**: Nico video search, newest first; "nicosearchdate:" prefix
