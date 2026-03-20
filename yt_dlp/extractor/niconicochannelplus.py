@@ -43,8 +43,8 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
         return self._download_json(
             f'https://api.nicochannel.jp/fc/{path}', video_id=item_id, **kwargs)
 
-    @classmethod
-    def _parse_jwt_payload(cls, token):
+    @staticmethod
+    def _parse_jwt_payload(token):
         if not token or token.count('.') < 2:
             return None
         try:
@@ -56,18 +56,18 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
 
     @classmethod
     def _set_api_access_token(cls, value):
-        cls._API_ACCESS_TOKEN = value
-        cls._API_ACCESS_TOKEN_EXPIRY = traverse_obj(
-            cls._parse_jwt_payload(value), ('exp', {int})) or 0
+        NiconicoChannelPlusBaseIE._API_ACCESS_TOKEN = value
+        NiconicoChannelPlusBaseIE._API_ACCESS_TOKEN_EXPIRY = traverse_obj(
+            NiconicoChannelPlusBaseIE._parse_jwt_payload(value), ('exp', {int})) or 0
 
     @property
     def _api_access_token_is_expired(self):
-        return self._API_ACCESS_TOKEN_EXPIRY - 30 <= int(time.time())
+        return NiconicoChannelPlusBaseIE._API_ACCESS_TOKEN_EXPIRY - 30 <= int(time.time())
 
     def _cache_auth0_tokens(self):
         self.cache.store(self._NETRC_MACHINE, 'tokens', {
-            'access_token': type(self)._API_ACCESS_TOKEN,
-            'refresh_token': type(self)._API_REFRESH_TOKEN,
+            'access_token': NiconicoChannelPlusBaseIE._API_ACCESS_TOKEN,
+            'refresh_token': NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN,
         })
 
     def _load_cached_auth0_tokens(self):
@@ -75,24 +75,24 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
             return
         cached_tokens = self.cache.load(self._NETRC_MACHINE, 'tokens', default={})
         self._set_api_access_token(cached_tokens.get('access_token'))
-        type(self)._API_REFRESH_TOKEN = cached_tokens.get('refresh_token')
+        NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN = cached_tokens.get('refresh_token')
 
     def _get_auth0_client_info(self):
-        if self._AUTH0_CLIENT_ID and self._AUTH0_DOMAIN:
-            return self._AUTH0_DOMAIN, self._AUTH0_CLIENT_ID
+        if NiconicoChannelPlusBaseIE._AUTH0_CLIENT_ID and NiconicoChannelPlusBaseIE._AUTH0_DOMAIN:
+            return NiconicoChannelPlusBaseIE._AUTH0_DOMAIN, NiconicoChannelPlusBaseIE._AUTH0_CLIENT_ID
 
         login_data = self._call_api(
             'fanclub_sites/1/login', item_id='fanclub_sites/1/login',
             headers={'fc_use_device': 'null'},
             note='Fetching login info', errnote='Unable to fetch login info',
         )
-        type(self)._AUTH0_CLIENT_ID = traverse_obj(
+        NiconicoChannelPlusBaseIE._AUTH0_CLIENT_ID = traverse_obj(
             login_data, ('data', 'fanclub_site', 'auth0_web_client_id', {str}))
-        type(self)._AUTH0_DOMAIN = traverse_obj(
+        NiconicoChannelPlusBaseIE._AUTH0_DOMAIN = traverse_obj(
             login_data, ('data', 'fanclub_site', 'fanclub_group', 'auth0_domain', {str}))
-        if not self._AUTH0_CLIENT_ID or not self._AUTH0_DOMAIN:
+        if not NiconicoChannelPlusBaseIE._AUTH0_CLIENT_ID or not NiconicoChannelPlusBaseIE._AUTH0_DOMAIN:
             raise ExtractorError('Unable to determine NicoChannel Plus Auth0 client info')
-        return self._AUTH0_DOMAIN, self._AUTH0_CLIENT_ID
+        return NiconicoChannelPlusBaseIE._AUTH0_DOMAIN, NiconicoChannelPlusBaseIE._AUTH0_CLIENT_ID
 
     def _fetch_new_auth0_tokens(self, *, invalidate=False):
         self._load_cached_auth0_tokens()
@@ -129,14 +129,14 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
         except ExtractorError as e:
             if isinstance(e.cause, HTTPError) and e.cause.status in (400, 401, 403):
                 self._set_api_access_token(None)
-                type(self)._API_REFRESH_TOKEN = None
+                NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN = None
                 self._cache_auth0_tokens()
                 raise ExtractorError('Your NicoChannel Plus tokens have been invalidated', expected=True)
             raise
 
         self._set_api_access_token(response.get('access_token'))
         if refresh_token := traverse_obj(response, ('refresh_token', {str})):
-            type(self)._API_REFRESH_TOKEN = refresh_token
+            NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN = refresh_token
         self._cache_auth0_tokens()
         return self._API_ACCESS_TOKEN
 
@@ -214,7 +214,7 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
             })
 
         self._set_api_access_token(response.get('access_token'))
-        type(self)._API_REFRESH_TOKEN = traverse_obj(response, ('refresh_token', {str}))
+        NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN = traverse_obj(response, ('refresh_token', {str}))
         if not self._API_ACCESS_TOKEN or not self._API_REFRESH_TOKEN:
             raise ExtractorError('Unable to complete NicoChannel Plus login')
         self._cache_auth0_tokens()
@@ -289,10 +289,22 @@ class NiconicoChannelPlusBaseIE(InfoExtractor):
         ), ('data', 'fanclub_site', {dict})) or {}
 
     def _perform_login(self, username, password):
+        self._load_cached_auth0_tokens()
+        if self._API_ACCESS_TOKEN and not self._api_access_token_is_expired:
+            return
+
         self.report_login()
 
         if username == 'refresh':
-            type(self)._API_REFRESH_TOKEN = password
+            # Refresh tokens are rotated on use. When this extractor is initialized
+            # again for playlist entries, prefer the newer cached/shared token.
+            if self._API_REFRESH_TOKEN and self._API_REFRESH_TOKEN != password:
+                try:
+                    self._fetch_new_auth0_tokens()
+                    return
+                except ExtractorError:
+                    pass
+            NiconicoChannelPlusBaseIE._API_REFRESH_TOKEN = password
             self._set_api_access_token(None)
             self._fetch_new_auth0_tokens()
         elif username == 'token':
